@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Popsicles and Prosecco Revival</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
+  <style>
+    body { background-color: #111827; }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+
+  <script>
+    // ⚠️ PASTE YOUR FIREBASE CONFIG HERE ⚠️
+    const firebaseConfig = {
+      apiKey: "AIzaSyA829w5S56aVJpZCNwhf4FY1GCqjg5tjH0",
+      authDomain: "pandp-9d57f.firebaseapp.com",
+      databaseURL: "https://pandp-9d57f-default-rtdb.firebaseio.com",
+      projectId: "pandp-9d57f",
+      storageBucket: "pandp-9d57f.firebasestorage.app",
+      messagingSenderId: "960754292759",
+      appId: "1:960754292759:web:ff27d54f9676a488e9e452",
+      measurementId: "G-V9FB95G0GL"
+    };
+
+    // Initialize Firebase
+    firebase.initializeApp(firebaseConfig);
+    const database = firebase.database();
+    const votesRef = database.ref('votes');
+
+    // App State
+    let state = {
+      userName: '',
+      isLoggedIn: false,
+      currentMonth: new Date().getMonth(),
+      currentYear: new Date().getFullYear(),
+      votes: {},
+      userSelections: new Set()
+    };
+
+    const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
+                    'July', 'August', 'September', 'October', 'November', 'December'];
+    const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+    function getDaysInMonth(year, month) {
+      return new Date(year, month + 1, 0).getDate();
+    }
+
+    function getFirstDayOfMonth(year, month) {
+      return new Date(year, month, 1).getDay();
+    }
+
+    // Listen for real-time updates
+    votesRef.on('value', (snapshot) => {
+      state.votes = snapshot.val() || {};
+      if (state.isLoggedIn) {
+        updateUserSelections();
+      }
+      render();
+    });
+
+    function updateUserSelections() {
+      state.userSelections = new Set();
+      Object.entries(state.votes).forEach(([date, voters]) => {
+        if (voters && voters.includes(state.userName)) {
+          state.userSelections.add(date);
+        }
+      });
+    }
+
+    function login(name) {
+      state.userName = name;
+      state.isLoggedIn = true;
+      updateUserSelections();
+      render();
+    }
+
+    function logout() {
+      state.userName = '';
+      state.isLoggedIn = false;
+      state.userSelections = new Set();
+      render();
+    }
+
+    function toggleDate(dateKey) {
+      const currentVoters = state.votes[dateKey] || [];
+      let newVoters;
+
+      if (currentVoters.includes(state.userName)) {
+        newVoters = currentVoters.filter(n => n !== state.userName);
+      } else {
+        newVoters = [...currentVoters, state.userName];
+      }
+
+      if (newVoters.length === 0) {
+        votesRef.child(dateKey).remove();
+      } else {
+        votesRef.child(dateKey).set(newVoters);
+      }
+    }
+
+    function changeMonth(delta) {
+      state.currentMonth += delta;
+      if (state.currentMonth < 0) state.currentMonth = 0;
+      if (state.currentMonth > 11) state.currentMonth = 11;
+      render();
+    }
+
+    function getExistingUsers() {
+      const users = new Set();
+      Object.values(state.votes).forEach(voters => {
+        if (voters) voters.forEach(v => users.add(v));
+      });
+      return [...users].sort();
+    }
+
+    function getTopDates() {
+      return Object.entries(state.votes)
+        .filter(([_, voters]) => voters && voters.length > 0)
+        .sort((a, b) => b[1].length - a[1].length)
+        .slice(0, 5);
+    }
+
+    function renderCalendar() {
+      const daysInMonth = getDaysInMonth(state.currentYear, state.currentMonth);
+      const firstDay = getFirstDayOfMonth(state.currentYear, state.currentMonth);
+      let html = '';
+
+      for (let i = 0; i < firstDay; i++) {
+        html += '<div class="h-24"></div>';
+      }
+
+      for (let day = 1; day <= daysInMonth; day++) {
+        const dateKey = `${state.currentYear}-${String(state.currentMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+        const voters = state.votes[dateKey] || [];
+        const isSelected = state.userSelections.has(dateKey);
+        const voteCount = voters.length;
+
+        const bgClass = isSelected ? 'bg-purple-900 border-purple-500' : 'bg-gray-800';
+        const textClass = isSelected ? 'text-purple-300' : 'text-gray-300';
+        const badgeClass = voteCount >= 3 ? 'bg-green-500 text-white' :
+                          voteCount >= 2 ? 'bg-yellow-400 text-gray-800' : 'bg-gray-600 text-gray-200';
+
+        html += `
+          <div onclick="toggleDate('${dateKey}')" 
+               class="h-24 border border-gray-700 p-1 cursor-pointer transition-all hover:bg-gray-700 ${bgClass}">
+            <div class="flex justify-between items-start">
+              <span class="text-sm font-medium ${textClass}">${day}</span>
+              ${voteCount > 0 ? `<span class="text-xs px-1.5 py-0.5 rounded-full ${badgeClass}">${voteCount}</span>` : ''}
+            </div>
+            <div class="mt-1 overflow-y-auto max-h-14">
+              ${voters.map(v => `<div class="text-xs text-gray-400 truncate">${v}</div>`).join('')}
+            </div>
+          </div>
+        `;
+      }
+
+      return html;
+    }
+
+    function render() {
+      const app = document.getElementById('app');
+      const existingUsers = getExistingUsers();
+      const topDates = getTopDates();
+
+      if (!state.isLoggedIn) {
+        app.innerHTML = `
+          <div class="min-h-screen bg-gray-900 flex items-center justify-center p-4">
+            <div class="bg-gray-800 rounded-xl shadow-lg p-8 max-w-md w-full">
+              <h1 class="text-2xl font-bold text-white mb-2">Popsicles and Prosecco Revival</h1>
+              <p class="text-gray-400 mb-6">Enter your name to vote on dates that work for you.</p>
+              
+              ${existingUsers.length > 0 ? `
+                <div class="mb-6">
+                  <p class="text-sm text-gray-400 mb-3">Select your name to update your votes:</p>
+                  <div class="flex flex-wrap gap-2">
+                    ${existingUsers.map(name => `
+                      <button onclick="login('${name}')" 
+                              class="px-3 py-1.5 bg-gray-700 text-gray-200 rounded-lg text-sm hover:bg-gray-600 transition-colors">
+                        ${name}
+                      </button>
+                    `).join('')}
+                  </div>
+                  <div class="border-t border-gray-700 mt-6 pt-6">
+                    <p class="text-sm text-gray-400 mb-3">New here? Enter your name:</p>
+                  </div>
+                </div>
+              ` : ''}
+              
+              <div class="space-y-4">
+                <input type="text" id="nameInput" placeholder="Your name"
+                       onkeydown="if(event.key==='Enter'){const n=document.getElementById('nameInput').value.trim();if(n)login(n);}"
+                       class="w-full px-4 py-3 bg-gray-700 border border-gray-600 text-white placeholder-gray-400 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500">
+                <button onclick="const n=document.getElementById('nameInput').value.trim();if(n)login(n);"
+                        class="w-full py-3 bg-purple-600 text-white rounded-lg font-medium hover:bg-purple-700 transition-colors">
+                  Continue
+                </button>
+              </div>
+            </div>
+          </div>
+        `;
+        return;
+      }
+
+      app.innerHTML = `
+        <div class="min-h-screen bg-gray-900 p-4">
+          <div class="max-w-5xl mx-auto">
+            <div class="bg-gray-800 rounded-xl shadow-lg p-6 mb-4">
+              <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                <div>
+                  <h1 class="text-2xl font-bold text-white">Popsicles and Prosecco Revival</h1>
+                  <p class="text-gray-400">Welcome, ${state.userName}! Click dates to mark your availability.</p>
+                </div>
+                <button onclick="logout()"
+                        class="px-4 py-2 bg-purple-600 text-white rounded-lg font-medium hover:bg-purple-700 transition-colors">
+                  Save & Log Out
+                </button>
+              </div>
+            </div>
+
+            <div class="flex flex-col lg:flex-row gap-4">
+              <div class="flex-1 bg-gray-800 rounded-xl shadow-lg p-6">
+                <div class="flex justify-between items-center mb-4">
+                  <button onclick="changeMonth(-1)" ${state.currentMonth === 0 ? 'disabled' : ''}
+                          class="p-2 rounded-lg hover:bg-gray-700 text-gray-300 disabled:opacity-30 disabled:cursor-not-allowed">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+                    </svg>
+                  </button>
+                  <h2 class="text-xl font-semibold text-white">${MONTHS[state.currentMonth]} ${state.currentYear}</h2>
+                  <button onclick="changeMonth(1)" ${state.currentMonth === 11 ? 'disabled' : ''}
+                          class="p-2 rounded-lg hover:bg-gray-700 text-gray-300 disabled:opacity-30 disabled:cursor-not-allowed">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                    </svg>
+                  </button>
+                </div>
+
+                <div class="grid grid-cols-7 mb-2">
+                  ${DAYS.map(d => `<div class="text-center text-sm font-medium text-gray-400 py-2">${d}</div>`).join('')}
+                </div>
+
+                <div class="grid grid-cols-7 gap-1">
+                  ${renderCalendar()}
+                </div>
+              </div>
+
+              <div class="lg:w-72 bg-gray-800 rounded-xl shadow-lg p-6">
+                <h3 class="text-lg font-semibold text-white mb-4">Top Dates</h3>
+                ${topDates.length === 0 ? '<p class="text-gray-400 text-sm">No votes yet. Be the first!</p>' : `
+                  <div class="space-y-3">
+                    ${topDates.map(([dateKey, voters], idx) => {
+                      const [y, m, d] = dateKey.split('-');
+                      const date = new Date(y, m - 1, d);
+                      const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                      const badgeClass = idx === 0 ? 'bg-green-500 text-white' : 'bg-gray-600 text-gray-200';
+                      return `
+                        <div class="p-3 bg-gray-700 rounded-lg">
+                          <div class="flex justify-between items-center mb-1">
+                            <span class="font-medium text-white">${dateStr}</span>
+                            <span class="text-sm px-2 py-0.5 rounded-full ${badgeClass}">
+                              ${voters.length} vote${voters.length !== 1 ? 's' : ''}
+                            </span>
+                          </div>
+                          <div class="text-sm text-gray-400">${voters.join(', ')}</div>
+                        </div>
+                      `;
+                    }).join('')}
+                  </div>
+                `}
+
+                <div class="mt-6 pt-6 border-t border-gray-700">
+                  <h4 class="text-sm font-medium text-gray-300 mb-2">Legend</h4>
+                  <div class="space-y-2 text-sm">
+                    <div class="flex items-center gap-2">
+                      <span class="w-6 h-6 bg-purple-900 border border-purple-500 rounded"></span>
+                      <span class="text-gray-400">Your selection</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <span class="w-6 h-6 bg-green-500 rounded flex items-center justify-center text-white text-xs">3+</span>
+                      <span class="text-gray-400">3+ votes</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <span class="w-6 h-6 bg-yellow-400 rounded flex items-center justify-center text-gray-800 text-xs">2</span>
+                      <span class="text-gray-400">2 votes</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="mt-6 pt-6 border-t border-gray-700">
+                  <p class="text-xs text-gray-500">Updates sync in real-time for everyone!</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    // Initial render
+    render();
+  </script>
+</body>
+</html>
